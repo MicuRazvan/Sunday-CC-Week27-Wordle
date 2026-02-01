@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Spring Wordle</title>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; background: #121213; color: white; margin: 0; padding: 20px; }
+        h1 { margin-bottom: 10px; }
+
+        #grid { display: grid; grid-template-rows: repeat(6, 1fr); gap: 5px; margin-top: 10px; }
+        .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+        .tile { width: 50px; height: 50px; border: 2px solid #3a3a3c; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: bold; text-transform: uppercase; user-select: none;}
+
+        /* Colors */
+        .correct { background: #538d4e; border-color: #538d4e; }
+        .present { background: #b59f3b; border-color: #b59f3b; }
+        .absent { background: #3a3a3c; border-color: #3a3a3c; }
+
+        #keyboard { margin-top: 20px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+        .kb-row { display: flex; gap: 6px; }
+
+        /* Keyboard Buttons */
+        button.key-btn { padding: 15px 10px; border-radius: 4px; border: none; background: #818384; color: white; font-weight: bold; cursor: pointer; min-width: 40px; }
+        button.wide { min-width: 65px; }
+
+        /* UI Area below keyboard */
+        #game-ui { margin-top: 25px; text-align: center; display: flex; flex-direction: column; gap: 10px; align-items: center; min-height: 80px; }
+
+        #message { font-size: 1.2rem; font-weight: bold; min-height: 24px; }
+
+        #restart-btn {
+            display: none; /* Hidden by default */
+            padding: 10px 20px;
+            font-size: 1rem;
+            background-color: #538d4e;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #restart-btn:hover { background-color: #467a42; }
+
+    </style>
+</head>
+<body>
+
+<h1>WORDLE</h1>
+
+<div id="grid"></div>
+
+<div id="keyboard"></div>
+
+<div id="game-ui">
+    <div id="message"></div>
+    <button id="restart-btn" onclick="resetGame()">New Game</button>
+</div>
+
+<!-- th:inline="none" is technically specific to Thymeleaf,
+     but harmless if served statically. It prevents the parsing error you had before. -->
+<script>
+    let currentGuess = "";
+    let currentRow = 0;
+    let isGameOver = false;
+
+    const grid = document.getElementById("grid");
+    const msgDisplay = document.getElementById("message");
+    const restartBtn = document.getElementById("restart-btn");
+
+    // 1. Initialize Grid
+    for(let i=0; i<6; i++){
+        let row = document.createElement("div");
+        row.className = "row";
+        for(let j=0; j<5; j++){
+            // We add data-row and data-col to easily find tiles later for clearing
+            row.innerHTML += `<div class="tile" id="tile-${i}-${j}"></div>`;
+        }
+        grid.appendChild(row);
+    }
+
+    // 2. Initialize Keyboard
+    const keys = [
+        ["Q","W","E","R","T","Y","U","I","O","P"],
+        ["A","S","D","F","G","H","J","K","L"],
+        ["ENTER","Z","X","C","V","B","N","M","DEL"]
+    ];
+
+    keys.forEach(rowArr => {
+        let div = document.createElement("div");
+        div.className = "kb-row";
+        rowArr.forEach(key => {
+            let btn = document.createElement("button");
+            btn.innerText = key;
+            btn.id = "key-" + key;
+            btn.className = "key-btn";
+            if(key.length > 1) btn.classList.add("wide");
+
+            btn.onclick = () => handleInput(key);
+            div.appendChild(btn);
+        });
+        document.getElementById("keyboard").appendChild(div);
+    });
+
+    // 3. Input Handling
+    function handleInput(key) {
+        if (isGameOver) return;
+
+        if(key === "ENTER") {
+            submitGuess();
+        } else if(key === "DEL") {
+            currentGuess = currentGuess.slice(0, -1);
+            updateGrid();
+        } else if(currentGuess.length < 5 && /^[A-Z]$/.test(key)) {
+            currentGuess += key;
+            updateGrid();
+        }
+    }
+
+    function updateGrid() {
+        for(let i=0; i<5; i++) {
+            let tile = document.getElementById(`tile-${currentRow}-${i}`);
+            tile.innerText = currentGuess[i] || "";
+        }
+    }
+
+    // 4. Submit Guess Logic
+    async function submitGuess() {
+        if(currentGuess.length < 5) return;
+
+        const res = await fetch(`/api/guess?word=${currentGuess}`);
+        const colors = await res.json();
+
+        // Update Colors
+        colors.forEach((color, i) => {
+            // Update Tile
+            let tile = document.getElementById(`tile-${currentRow}-${i}`);
+            tile.classList.add(color);
+
+            // Update Keyboard (Priority: Correct > Present > Absent)
+            let keyBtn = document.getElementById("key-" + currentGuess[i]);
+            if (!keyBtn.classList.contains("correct")) {
+                // If it's already green, don't change it.
+                // Otherwise, remove old status and add new one.
+                keyBtn.classList.remove("present", "absent");
+                keyBtn.classList.add(color);
+            }
+        });
+
+        // Check Win/Loss
+        if(colors.every(c => c === "correct")) {
+            endGame("You Won!");
+        } else if(currentRow === 5) {
+            endGame("Game Over");
+        } else {
+            currentRow++;
+            currentGuess = "";
+        }
+    }
+
+    function endGame(msg) {
+        isGameOver = true;
+        msgDisplay.innerText = msg;
+        restartBtn.style.display = "block";
+    }
+
+    // 5. Reset Game Logic
+    async function resetGame() {
+        // Call backend to generate new word
+        await fetch('/api/new-game', { method: 'POST' });
+
+        // Reset UI Variables
+        currentRow = 0;
+        currentGuess = "";
+        isGameOver = false;
+        msgDisplay.innerText = "";
+        restartBtn.style.display = "none";
+
+        // Clear Grid (Text and Colors)
+        const tiles = document.querySelectorAll('.tile');
+        tiles.forEach(t => {
+            t.innerText = "";
+            t.className = "tile"; // Removes correct/present/absent classes
+        });
+
+        // Clear Keyboard Colors
+        const keyBtns = document.querySelectorAll('.key-btn');
+        keyBtns.forEach(k => {
+            k.classList.remove("correct", "present", "absent");
+        });
+    }
+</script>
+</body>
+</html>
